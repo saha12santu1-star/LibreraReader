@@ -1,4 +1,5 @@
-name: Build Librera F-Droid APK
+
+name: Build Librera with Drive Sync
 
 on:
   workflow_dispatch:
@@ -25,8 +26,19 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+
+      - name: Cache Android SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/27.2.12479018
+            /usr/local/lib/android/sdk/platforms/android-36
+          key: android-sdk-${{ runner.os }}-ndk27.2.12479018-api36-v1
 
       - name: Install build dependencies
         run: |
@@ -44,12 +56,31 @@ jobs:
           sdkmanager "platforms;android-36" \
             "ndk;27.2.12479018"
 
-      - name: Configure Gradle properties
+      - name: Configure Google Drive credentials
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          LIBRERA_APP_GDRIVE_KEY: ${{ secrets.LIBRERA_APP_GDRIVE_KEY }}
         run: |
+          set -eu
+
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::Add the GOOGLE_SERVICES_JSON repository secret."
+            exit 1
+          fi
+
+          if [ -z "$LIBRERA_APP_GDRIVE_KEY" ]; then
+            echo "::error::Add the LIBRERA_APP_GDRIVE_KEY repository secret."
+            exit 1
+          fi
+
+          printf '%s' "$GOOGLE_SERVICES_JSON" \
+            > app/google-services.json
+
           mkdir -p "$HOME/.gradle"
 
-          cat >> "$HOME/.gradle/gradle.properties" <<'EOF'
-          librera_appGdriveKey=
+          cat >> "$HOME/.gradle/gradle.properties" <<EOF
+          librera_appGdriveKey=$LIBRERA_APP_GDRIVE_KEY
+          librera_ndk_dir=$ANDROID_HOME/ndk/27.2.12479018
           librera_admobAppId=
           librera_admobBannerId=
           librera_admobFullId=
@@ -82,9 +113,6 @@ jobs:
           epub_reader_admobRewardId=
           EOF
 
-          echo "librera_ndk_dir=$ANDROID_HOME/ndk/27.2.12479018" \
-            >> "$HOME/.gradle/gradle.properties"
-
       - name: Make release signing conditional
         run: |
           python3 - <<'PY'
@@ -115,7 +143,6 @@ jobs:
           }"""
 
           updated, count = re.subn(pattern, replacement, text, count=1)
-
           if count != 1:
               raise SystemExit(
                   "Could not locate release signing configuration."
@@ -125,35 +152,45 @@ jobs:
           print("Release signing configuration updated.")
           PY
 
-      - name: Disable Google Services plugin for F-Droid
+      - name: Restrict APKs to ARM and ARM64
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path("app/build.gradle")
           text = path.read_text()
 
-          old = """plugins {
-              alias(libs.plugins.androidApplication)
-              alias(libs.plugins.googleServices)
+          pattern = (
+              r'(?s)splits\s*\{\s*abi\s*\{\s*'
+              r'enable\s*=\s*true\s*'
+              r'reset\(\)\s*'
+              r'include\s+"x86",\s*"x86_64",\s*'
+              r'"armeabi-v7a",\s*"arm64-v8a"\s*'
+              r'universalApk\s*=\s*true\s*'
+              r'\}\s*\}'
+          )
+
+          replacement = """splits {
+              abi {
+                  enable = true
+                  reset()
+                  include "armeabi-v7a", "arm64-v8a"
+                  universalApk = false
+              }
           }"""
 
-          new = """plugins {
-              alias(libs.plugins.androidApplication)
-              alias(libs.plugins.googleServices) apply false
-          }
+          updated, count = re.subn(
+              pattern, replacement, text, count=1
+          )
 
-          if (!project.hasProperty("skipGoogleServices")) {
-              apply plugin: 'com.google.gms.google-services'
-          }"""
-
-          if old not in text:
+          if count != 1:
               raise SystemExit(
-                  "Google Services plugin block did not match."
+                  "Original ABI configuration did not match."
               )
 
-          path.write_text(text.replace(old, new, 1))
-          print("Google Services plugin made conditional.")
+          path.write_text(updated)
+          print("Only ARM and ARM64 APKs enabled.")
           PY
 
       - name: Prepare fonts and MuPDF
@@ -163,17 +200,46 @@ jobs:
           ./fonts.sh
           ./link_to_mupdf_1.28.5.sh fdroid
 
-      - name: Build F-Droid debug APK
+      - name: Build regular Librera variant
         run: |
-          ./gradlew updateFDroid -PskipGoogleServices=true
-          ./gradlew assembleFdroidDebug \
-            -Pmupdf=1.28.5 \
-            -PskipGoogleServices=true
+          ./gradlew assembleLibreraDebug \
+            --build-cache \
+            -Pmupdf=1.28.5
 
-      - name: Upload APK
+      - name: Verify exactly two APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK_DIR="app/build/outputs/apk/librera/debug"
+
+          if [ ! -d "$APK_DIR" ]; then
+            echo "Expected output directory not found: $APK_DIR"
+            find app/build/outputs/apk -type f -name '*.apk' || true
+            exit 1
+          fi
+
+          mapfile -t APKS < <(
+            find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' | sort
+          )
+
+          if [ "${#APKS[@]}" -ne 2 ]; then
+            echo "Expected exactly two APKs; found ${#APKS[@]}"
+            printf '%s\n' "${APKS[@]}"
+            exit 1
+          fi
+
+          printf '%s\n' "${APKS[@]}" | grep -q -- '-arm.apk$'
+          printf '%s\n' "${APKS[@]}" | grep -q -- '-arm64.apk$'
+
+          printf '%s\n' "${APKS[@]}"
+
+      - name: Upload ARM and ARM64 APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Librera-FDroid-debug
-          path: app/build/outputs/apk/fdroid/debug/*.apk
+          name: Librera-Regular-ARM-ARM64
+          path: |
+            app/build/outputs/apk/librera/debug/*-arm.apk
+            app/build/outputs/apk/librera/debug/*-arm64.apk
           if-no-files-found: error
           retention-days: 7
