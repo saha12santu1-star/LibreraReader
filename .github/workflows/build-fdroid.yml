@@ -47,17 +47,43 @@ jobs:
       - name: Configure Gradle properties
         run: |
           mkdir -p "$HOME/.gradle"
+
+          cat >> "$HOME/.gradle/gradle.properties" <<'EOF'
+          librera_appGdriveKey=
+          librera_admobAppId=
+          librera_admobBannerId=
+          librera_admobFullId=
+          librera_admobRewardId=
+          pro_appGdriveKey=
+          pdf_classic_appGdriveKey=
+          pdf_classic_admobAppId=
+          pdf_classic_admobBannerId=
+          pdf_classic_admobFullId=
+          pdf_classic_admobRewardId=
+          ebooka_appGdriveKey=
+          ebooka_admobAppId=
+          ebooka_admobBannerId=
+          ebooka_admobFullId=
+          ebooka_admobRewardId=
+          pdf_v2_appGdriveKey=
+          pdf_v2_admobAppId=
+          pdf_v2_admobBannerId=
+          pdf_v2_admobFullId=
+          pdf_v2_admobRewardId=
+          tts_reader_appGdriveKey=
+          tts_reader_admobAppId=
+          tts_reader_admobBannerId=
+          tts_reader_admobFullId=
+          tts_reader_admobRewardId=
+          epub_reader_appGdriveKey=
+          epub_reader_admobAppId=
+          epub_reader_admobBannerId=
+          epub_reader_admobFullId=
+          epub_reader_admobRewardId=
+          EOF
+
           echo "librera_ndk_dir=$ANDROID_HOME/ndk/27.2.12479018" \
             >> "$HOME/.gradle/gradle.properties"
-          echo "librera_appGdriveKey=" \
-            >> "$HOME/.gradle/gradle.properties"
-
-      - name: Prepare fonts and MuPDF
-        run: |
-          cd Builder
-          chmod +x fonts.sh link_to_mupdf_1.28.5.sh
-          ./fonts.sh
-          ./link_to_mupdf_1.28.5.sh fdroid
 
       - name: Allow debug build without release keystore
         run: |
@@ -95,6 +121,13 @@ jobs:
           path.write_text(text.replace(old, new, 1))
           print("Release signing is now conditional.")
           PY
+
+      - name: Prepare fonts and MuPDF
+        run: |
+          cd Builder
+          chmod +x fonts.sh link_to_mupdf_1.28.5.sh
+          ./fonts.sh
+          ./link_to_mupdf_1.28.5.sh fdroid
 
       - name: Build F-Droid debug APK
         run: |
