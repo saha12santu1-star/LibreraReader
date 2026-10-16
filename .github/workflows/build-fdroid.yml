@@ -44,10 +44,12 @@ jobs:
           sdkmanager "platforms;android-36" \
             "ndk;27.2.12479018"
 
-      - name: Configure NDK
+      - name: Configure Gradle properties
         run: |
           mkdir -p "$HOME/.gradle"
           echo "librera_ndk_dir=$ANDROID_HOME/ndk/27.2.12479018" \
+            >> "$HOME/.gradle/gradle.properties"
+          echo "librera_appGdriveKey=" \
             >> "$HOME/.gradle/gradle.properties"
 
       - name: Prepare fonts and MuPDF
