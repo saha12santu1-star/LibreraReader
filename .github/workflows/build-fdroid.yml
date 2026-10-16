@@ -1,143 +1,41 @@
-name: Build Librera F-Droid APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - master
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git make pkg-config \
-            python3 python-is-python3 zip \
-            mesa-common-dev libxcursor-dev \
-            libxrandr-dev libxinerama-dev \
-            libglu1-mesa-dev libxi-dev libgl-dev
-
-      - name: Install Android SDK platform and NDK
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platforms;android-36" \
-            "ndk;27.2.12479018"
-
-      - name: Configure Gradle properties
-        run: |
-          mkdir -p "$HOME/.gradle"
-
-          cat >> "$HOME/.gradle/gradle.properties" <<'EOF'
-          librera_appGdriveKey=
-          librera_admobAppId=
-          librera_admobBannerId=
-          librera_admobFullId=
-          librera_admobRewardId=
-          pro_appGdriveKey=
-          pdf_classic_appGdriveKey=
-          pdf_classic_admobAppId=
-          pdf_classic_admobBannerId=
-          pdf_classic_admobFullId=
-          pdf_classic_admobRewardId=
-          ebooka_appGdriveKey=
-          ebooka_admobAppId=
-          ebooka_admobBannerId=
-          ebooka_admobFullId=
-          ebooka_admobRewardId=
-          pdf_v2_appGdriveKey=
-          pdf_v2_admobAppId=
-          pdf_v2_admobBannerId=
-          pdf_v2_admobFullId=
-          pdf_v2_admobRewardId=
-          tts_reader_appGdriveKey=
-          tts_reader_admobAppId=
-          tts_reader_admobBannerId=
-          tts_reader_admobFullId=
-          tts_reader_admobRewardId=
-          epub_reader_appGdriveKey=
-          epub_reader_admobAppId=
-          epub_reader_admobBannerId=
-          epub_reader_admobFullId=
-          epub_reader_admobRewardId=
-          EOF
-
-          echo "librera_ndk_dir=$ANDROID_HOME/ndk/27.2.12479018" \
-            >> "$HOME/.gradle/gradle.properties"
-
-      - name: Allow debug build without release keystore
+- name: Create temporary Google Services configuration
         run: |
           python3 - <<'PY'
+          import json
           from pathlib import Path
 
-          path = Path("app/build.gradle")
-          text = path.read_text()
-
-          old = """    signingConfigs {
-                  release {
-                      storeFile file(RELEASE_STORE_FILE)
-                      storePassword RELEASE_STORE_PASSWORD
-                      keyAlias RELEASE_KEY_ALIAS
-                      keyPassword RELEASE_KEY_PASSWORD
-                  }
-              }"""
-
-          new = """    signingConfigs {
-                  release {
-                      if (project.hasProperty('RELEASE_STORE_FILE')) {
-                          storeFile file(RELEASE_STORE_FILE)
-                          storePassword RELEASE_STORE_PASSWORD
-                          keyAlias RELEASE_KEY_ALIAS
-                          keyPassword RELEASE_KEY_PASSWORD
+          config = {
+              "project_info": {
+                  "project_number": "123456789012",
+                  "project_id": "librera-ci-placeholder"
+              },
+              "client": [{
+                  "client_info": {
+                      "mobilesdk_app_id":
+                          "1:123456789012:android:0000000000000000",
+                      "android_client_info": {
+                          "package_name": "com.foobnix.pdf.reader"
                       }
-                  }
-              }"""
+                  },
+                  "api_key": [{
+                      "current_key": "placeholder-api-key"
+                  }]
+              }],
+              "configuration_version": "1"
+          }
 
-          if old not in text:
-              raise SystemExit(
-                  "Signing configuration did not match; no changes made."
-              )
+          paths = [
+              "app/src/fdroidDebug/google-services.json",
+              "app/src/fdroid/debug/google-services.json",
+              "app/src/debug/fdroid/google-services.json",
+              "app/src/fdroid/google-services.json",
+              "app/src/debug/google-services.json",
+              "app/google-services.json"
+          ]
 
-          path.write_text(text.replace(old, new, 1))
-          print("Release signing is now conditional.")
+          for item in paths:
+              path = Path(item)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(json.dumps(config, indent=2))
+              print(f"Created {path}")
           PY
-
-      - name: Prepare fonts and MuPDF
-        run: |
-          cd Builder
-          chmod +x fonts.sh link_to_mupdf_1.28.5.sh
-          ./fonts.sh
-          ./link_to_mupdf_1.28.5.sh fdroid
-
-      - name: Build F-Droid debug APK
-        run: |
-          ./gradlew updateFDroid
-          ./gradlew assembleFdroidDebug -Pmupdf=1.28.5
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Librera-FDroid-debug
-          path: app/build/outputs/apk/fdroid/debug/*.apk
-          if-no-files-found: error
-          retention-days: 7
