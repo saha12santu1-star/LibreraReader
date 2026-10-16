@@ -85,7 +85,47 @@ jobs:
           echo "librera_ndk_dir=$ANDROID_HOME/ndk/27.2.12479018" \
             >> "$HOME/.gradle/gradle.properties"
 
-      - name: Allow debug build without release keystore
+      - name: Make release signing conditional
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path("app/build.gradle")
+          text = path.read_text()
+
+          pattern = (
+              r'(?s)    signingConfigs\s*\{\s*release\s*\{'
+              r'\s*storeFile file\(RELEASE_STORE_FILE\)'
+              r'\s*storePassword RELEASE_STORE_PASSWORD'
+              r'\s*keyAlias RELEASE_KEY_ALIAS'
+              r'\s*keyPassword RELEASE_KEY_PASSWORD'
+              r'\s*\}\s*\}'
+          )
+
+          replacement = """    signingConfigs {
+              release {
+                  if (project.hasProperty('RELEASE_STORE_FILE')) {
+                      storeFile file(RELEASE_STORE_FILE)
+                      storePassword RELEASE_STORE_PASSWORD
+                      keyAlias RELEASE_KEY_ALIAS
+                      keyPassword RELEASE_KEY_PASSWORD
+                  }
+              }
+          }"""
+
+          updated, count = re.subn(pattern, replacement, text, count=1)
+
+          if count != 1:
+              raise SystemExit(
+                  "Could not locate release signing configuration."
+              )
+
+          path.write_text(updated)
+          print("Release signing configuration updated.")
+          PY
+
+      - name: Disable Google Services plugin for F-Droid
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -93,30 +133,27 @@ jobs:
           path = Path("app/build.gradle")
           text = path.read_text()
 
-          old = """    signingConfigs {
-                  release {
-                      storeFile file(RELEASE_STORE_FILE)
-                      storePassword RELEASE_STORE_PASSWORD
-                      keyAlias RELEASE_KEY_ALIAS
-                      keyPassword RELEASE_KEY_PASSWORD
-                  }
-              }"""
+          old = """plugins {
+              alias(libs.plugins.androidApplication)
+              alias(libs.plugins.googleServices)
+          }"""
 
-          new = """    signingConfigs {
-                  release {
-                      if (project.hasProperty('RELEASE_STORE_FILE')) {
-                          storeFile file(RELEASE_STORE_FILE)
-                          storePassword RELEASE_STORE_PASSWORD
-                          keyAlias RELEASE_KEY_ALIAS
-                          keyPassword RELEASE_KEY_PASSWORD
-                      }
-                  }
-              }"""
+          new = """plugins {
+              alias(libs.plugins.androidApplication)
+              alias(libs.plugins.googleServices) apply false
+          }
+
+          if (!project.hasProperty("skipGoogleServices")) {
+              apply plugin: 'com.google.gms.google-services'
+          }"""
 
           if old not in text:
-              raise SystemExit("Signing configuration did not match.")
+              raise SystemExit(
+                  "Google Services plugin block did not match."
+              )
 
           path.write_text(text.replace(old, new, 1))
+          print("Google Services plugin made conditional.")
           PY
 
       - name: Prepare fonts and MuPDF
@@ -126,52 +163,12 @@ jobs:
           ./fonts.sh
           ./link_to_mupdf_1.28.5.sh fdroid
 
-      - name: Create temporary Google Services configuration
-        run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          config = {
-              "project_info": {
-                  "project_number": "123456789012",
-                  "project_id": "librera-ci-placeholder"
-              },
-              "client": [{
-                  "client_info": {
-                      "mobilesdk_app_id":
-                          "1:123456789012:android:0000000000000000",
-                      "android_client_info": {
-                          "package_name": "com.foobnix.pdf.reader"
-                      }
-                  },
-                  "api_key": [{
-                      "current_key": "placeholder-api-key"
-                  }]
-              }],
-              "configuration_version": "1"
-          }
-
-          paths = [
-              "app/src/fdroidDebug/google-services.json",
-              "app/src/fdroid/debug/google-services.json",
-              "app/src/debug/fdroid/google-services.json",
-              "app/src/fdroid/google-services.json",
-              "app/src/debug/google-services.json",
-              "app/google-services.json"
-          ]
-
-          for item in paths:
-              path = Path(item)
-              path.parent.mkdir(parents=True, exist_ok=True)
-              path.write_text(json.dumps(config, indent=2))
-              print(f"Created {path}")
-          PY
-
       - name: Build F-Droid debug APK
         run: |
-          ./gradlew updateFDroid
-          ./gradlew assembleFdroidDebug -Pmupdf=1.28.5
+          ./gradlew updateFDroid -PskipGoogleServices=true
+          ./gradlew assembleFdroidDebug \
+            -Pmupdf=1.28.5 \
+            -PskipGoogleServices=true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
